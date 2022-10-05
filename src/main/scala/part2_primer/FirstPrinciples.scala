@@ -137,6 +137,31 @@ object MaterializingIntro extends App {
       println("Failed to get total words")
   }
 
+}
 
+object AsyncBoundariesAndOrder extends App {
+
+  implicit val system = ActorSystem("principleSystem")
+  implicit val materializer = ActorMaterializer()
+
+  import scala.concurrent.ExecutionContext.Implicits.global
+
+
+  val source = Source(1 to 9)
+  val flow = Flow[Int].map(x => {
+    Thread.sleep(2000)
+    x * 100
+  })
+  val flow2 = Flow[Int].map(x => {
+    Thread.sleep(2000)
+    x + 1
+  })
+  val sink = Sink.foreach[Int](println)
+
+  source.via(flow).via(flow2).to(sink).run() //all executed in one actor - takes longer
+  source.via(flow).async// 1st actor
+    .via(flow2).async //2nd actors
+    .to(sink) //3rd actor
+    .run() //faster execution
 
 }
