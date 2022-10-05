@@ -1,7 +1,7 @@
 package part2_primer
 
 import akka.actor.ActorSystem
-import akka.stream.ActorMaterializer
+import akka.stream.{ActorMaterializer, OverflowStrategy}
 import akka.stream.scaladsl.{Flow, Keep, Sink, Source}
 
 import scala.concurrent.Future
@@ -143,7 +143,6 @@ object AsyncBoundariesAndOrder extends App {
 
   implicit val system = ActorSystem("principleSystem")
   implicit val materializer = ActorMaterializer()
-
   import scala.concurrent.ExecutionContext.Implicits.global
 
 
@@ -163,5 +162,39 @@ object AsyncBoundariesAndOrder extends App {
     .via(flow2).async //2nd actors
     .to(sink) //3rd actor
     .run() //faster execution
+
+}
+
+object BackPressureTesting extends App {
+
+  implicit val system = ActorSystem("principleSystem")
+  implicit val materializer = ActorMaterializer()
+  import scala.concurrent.ExecutionContext.Implicits.global
+
+  val fastSource = Source(1 to 1000)
+  val slowSink = Sink.foreach[Int]{ x =>
+    //simulate slow sink process
+    Thread.sleep(50)
+    println(s"Sinking ${x}")
+  }
+
+  val simpleFlow = Flow[Int].map(x => {
+    println(s"Processing ${x}")
+    x + 1
+  })
+
+  /*
+  fastSource.async
+    .via(simpleFlow)
+    .to(slowSink)
+    .run() */
+
+  val bufferedFlow = simpleFlow.buffer(10,overflowStrategy = OverflowStrategy.dropHead)
+  fastSource.async
+    .via(bufferedFlow).async
+    .to(slowSink)
+    .run() //what is the point of these when you are loosing data?
+
+
 
 }
