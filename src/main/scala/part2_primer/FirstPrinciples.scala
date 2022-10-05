@@ -2,9 +2,10 @@ package part2_primer
 
 import akka.actor.ActorSystem
 import akka.stream.ActorMaterializer
-import akka.stream.scaladsl.{Flow, Sink, Source}
+import akka.stream.scaladsl.{Flow, Keep, Sink, Source}
 
 import scala.concurrent.Future
+import scala.util.{Failure, Success}
 
 object FirstPrinciples extends App {
 
@@ -66,4 +67,76 @@ object FirstPrinciples extends App {
   namesSource.filter(x => x.length >= 5).take(2).to(Sink.foreach[String](println)).run()
   namesSource.filter(x => x.length >= 5).take(2).runForeach(println)
   //WARNING NUUUUUUULLLLLSLLSLS NOT ALLOWEEEOUDUED
+}
+
+object MaterializingIntro extends App {
+
+  implicit val system = ActorSystem("principleSystem")
+  implicit val materializer = ActorMaterializer()
+  import scala.concurrent.ExecutionContext.Implicits.global
+
+
+  val source = Source(1 to 9)
+  val flow = Flow[Int].map(x => x * 100)
+  val flow2 = Flow[Int].map(x => x + 1)
+  //val sink = Sink.foreach[Int](println)
+  val sink = Sink.reduce[Int]((a,b) => a + b)
+  //val graph = source.to(sink)
+  //val someMaterializedView = graph.run()
+  //val graph = source.viaMat(flow)(Keep.right).toMat(sink)(Keep.right)
+  //val graph = source.viaMat(flow)(Keep.left).toMat(sink)(Keep.right)
+  val graph = source.viaMat(flow)(Keep.left).viaMat(flow2)(Keep.right).toMat(sink)(Keep.right)
+  graph.run().onComplete{
+    case Success(value) =>
+      println(s"The result of the graph is $value")
+    case Failure(ex) =>
+      println("Failed to retrieve graph")
+  }
+
+  //sugar
+  val sum = source.runWith(Sink.reduce[Int]((a,b) => a+ b))
+  //val sum =  Source(1 to 10).runReduce(_ + _)
+  sum.onComplete{
+    case Success(value) =>
+      println(s"The result of the graph is $value")
+    case Failure(ex) =>
+      println("Failed to retrieve graph")
+  }
+
+  //return the last element of a source
+  //total word count of a stream of sentences
+
+  val lastVal = Source(1 to 100).runWith(Sink.last)
+  lastVal.onComplete{
+    case Success(value) =>
+      println(s"The last val is $value")
+    case Failure(ex) =>
+      println(s"The last val is")
+  }
+
+  val senteceSource = Source(List("fffff asdas box","ssssss asda total","4444 asda" , "imperial el 999999999 adas"))
+  val sentenceFlow1 = Flow[String].map(sentence => sentence.split(" ").size) //flow returns a collection of number of words per sentence
+  val sentenceFlow2 = Flow[Int].reduce((a,b) => a + b)
+  val sinkSentence = Sink.head[Int]
+  val totalWords = senteceSource.viaMat(sentenceFlow1)(Keep.right).
+    viaMat(sentenceFlow2)(Keep.right).toMat(sinkSentence)(Keep.right)
+
+  totalWords.run().onComplete{
+    case Success(value) =>
+      println(s"Total words $value")
+    case Failure(ex) =>
+      println("Failed to get total words")
+
+  }
+  //shorthand
+  val sumWordSentences = senteceSource.viaMat(sentenceFlow1)(Keep.right).runWith(Sink.reduce[Int]((a,b) => a+ b))
+  sumWordSentences.onComplete{
+    case Success(value) =>
+      println(s"Total words shorthand $value")
+    case Failure(ex) =>
+      println("Failed to get total words")
+  }
+
+
+
 }
