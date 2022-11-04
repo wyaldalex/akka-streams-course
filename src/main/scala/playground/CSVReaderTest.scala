@@ -1,11 +1,14 @@
 package playground
 
 import akka.NotUsed
-import akka.actor.ActorSystem
+import akka.actor.{Actor, ActorLogging, ActorSystem, Props}
+import akka.pattern.ask
 import akka.stream.{ActorMaterializer, ClosedShape}
 import akka.stream.scaladsl.{Broadcast, FileIO, Flow, Framing, GraphDSL, Merge, RunnableGraph, Sink, Source}
-import akka.util.ByteString
+import akka.util.{ByteString, Timeout}
+import playground.CSVReaderTest.AccumulatorActorTest.OperationResponse
 
+import scala.concurrent.duration._
 import java.nio.file.Paths
 
 object CSVReaderTest extends App {
@@ -47,6 +50,33 @@ object CSVReaderTest extends App {
   implicit val system = ActorSystem("principleSystem")
   implicit val materializer = ActorMaterializer()
 
+  object AccumulatorActorTest {
+   def props: Props = Props(new AccumulatorActorTest)
+   case class OperationResponse(id: Int)
+   case object PrintResults
+  }
+  class AccumulatorActorTest extends Actor with ActorLogging {
+
+    import AccumulatorActorTest._
+
+    var totalAmount: Double = 0
+    var totalEntries = 0
+
+    override def receive: Receive = {
+      case taxiEntry : TaxiTripEntry =>
+        totalAmount += taxiEntry.totalAmount
+        totalEntries += 1
+        log.info(s"Processing taxi trip entry $totalEntries")
+        sender() ! OperationResponse(totalEntries)
+      case PrintResults =>
+        log.info(s"Printing final results at ${self.path}")
+      case _ =>
+        log.info("Wrong messaged delivered")
+    }
+  }
+  val accumulatorActorTest = system.actorOf(AccumulatorActorTest.props)
+  val accumulatorActorTest2 = system.actorOf(AccumulatorActorTest.props)
+
 
   //sources -> produce stuff
   val source = FileIO
@@ -62,10 +92,22 @@ object CSVReaderTest extends App {
   val toTaxiEntryFlow = Flow[String].map(fromCsvEntryToCaseClass)
 
   //sinks -> consume stuff
-  val sink = Sink.foreach[TaxiTripEntry](x => println(x.toString()))
+  //val sink = Sink.foreach[TaxiTripEntry](x => println(x.toString()))
+  import AccumulatorActorTest._
+  val sink = Sink.foreach[OperationResponse](x => println(x.toString()))
 
-  val runnableGraph = source.via(toStringFlow).via(toTaxiEntryFlow).to(sink)
+  implicit val timeout = Timeout(10 seconds)
+
+  val runnableGraph = source.via(toStringFlow)
+    .via(toTaxiEntryFlow).mapAsync(parallelism = 1)(event => (accumulatorActorTest ? event ).mapTo[OperationResponse])
+    .to(sink)
+  val runnableGraph2 = source.via(toStringFlow)
+    .via(toTaxiEntryFlow).mapAsync(parallelism = 1)(event => (accumulatorActorTest2 ? event).mapTo[OperationResponse])
+    .to(sink)
   runnableGraph.run()
+  runnableGraph2.run()
+  accumulatorActorTest ! PrintResults
+  accumulatorActorTest2 ! PrintResults
 
   //val graph = source.to(sink)
   //graph.run()
